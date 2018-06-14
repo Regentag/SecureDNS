@@ -1,0 +1,6 @@
+*.6
+tags
+test.out
+a.out
+*.syso
+*.exe
