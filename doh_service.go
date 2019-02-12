@@ -21,7 +21,7 @@ func (e *DohError) Error() string {
 	return e.msg
 }
 
-func NewErr(msg string) error {
+func newErr(msg string) error {
 	return &DohError{msg}
 }
 
@@ -46,7 +46,7 @@ func makeHttpsRequest(wire []byte) (respWire []byte, err error) {
 		defer resp.Body.Close()
 
 		if resp.StatusCode != 200 {
-			return nil, NewErr("HTTP error code " + resp.Status)
+			return nil, newErr("HTTP error code " + resp.Status)
 		}
 
 		respBody, err := ioutil.ReadAll(resp.Body)
@@ -114,14 +114,14 @@ func getDohHostAddr() (*dns.Msg, error) {
 	return r, err
 }
 
-type SvrStopFunc func()
+type SvrStopFunc func() error
 type SvrErrorHandlerFunc func(err error)
 
 func RunDNS(port int, errHandler SvrErrorHandlerFunc) (SvrStopFunc, error) {
 	// get DOH host address
 	h, e := getDohHostAddr()
 	if e != nil {
-		return nil, NewErr("Failed to lookup Cloudflare DOH server address. " +
+		return nil, newErr("Failed to lookup Cloudflare DOH server address. " +
 			e.Error())
 	}
 
@@ -137,9 +137,11 @@ func RunDNS(port int, errHandler SvrErrorHandlerFunc) (SvrStopFunc, error) {
 		}
 	}()
 
-	return func() {
+	return func() error {
 		if srv != nil {
-			srv.Shutdown()
+			return srv.Shutdown()
+		} else {
+			return newErr("No DNS server instance.")
 		}
 	}, nil
 }

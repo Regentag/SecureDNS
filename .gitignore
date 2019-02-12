@@ -4,3 +4,4 @@ test.out
 a.out
 *.syso
 *.exe
+*.log

@@ -1,179 +1,103 @@
 package main
 
 import (
-	"net"
-	"strings"
+	"golang.org/x/sys/windows/svc"
+	//"golang.org/x/sys/windows/svc/debug"
+	"gopkg.in/natefinch/lumberjack.v2"
+	"log"
+	"os"
+	"path/filepath"
+	"time"
 )
 
-import (
-	"github.com/lxn/walk"
-	. "github.com/lxn/walk/declarative"
-)
-
-const LOCALHOST = "127.0.0.1"
-
-type SDMainWindow struct {
-	*walk.MainWindow
-	ifaces *walk.ComboBox
-	btn    *walk.PushButton
-	text   *walk.TextEdit
-
+type ServContext struct {
 	dnsSvcStop SvrStopFunc
 }
 
-func (w *SDMainWindow) onWindowLoad() {
-	// Attach MainWindow Closing Event Handler.
-	handle := w.Closing().Attach(w.onCloseWindow)
+// svc.Handler 인터페이스 구현
+func (srv *ServContext) Execute(args []string, req <-chan svc.ChangeRequest, stat chan<- svc.Status) (svcSpecificEC bool, exitCode uint32) {
+	stat <- svc.Status{State: svc.StartPending}
 
-	// startup DNS service
+	// 실제 서비스 내용
+	stopChan := make(chan bool, 1)
+	srv.runBody()
+
+	stat <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
+
+LOOP:
+	for {
+		// 서비스 변경 요청에 대해 핸들링
+		switch r := <-req; r.Cmd {
+		case svc.Stop, svc.Shutdown:
+			stopChan <- true
+			break LOOP
+
+		case svc.Interrogate:
+			stat <- r.CurrentStatus
+			time.Sleep(100 * time.Millisecond)
+			stat <- r.CurrentStatus
+
+			//case svc.Pause:
+			//case svc.Continue:
+		}
+	}
+
+	stat <- svc.Status{State: svc.StopPending}
+
+	// Stop DNS server
+	log.Println("Shutting down...")
+
+	de := srv.dnsSvcStop()
+	if de != nil {
+		WriteErrorLogMsg("DNS service shutdown error: ", de)
+	} else {
+		log.Println("DNS service stopped.")
+	}
+
+	log.Println("SecDNS was stopped.")
+	return
+}
+
+func (srv *ServContext) runBody() {
+	// DNS 서버를 go routine으로 시작하고
+	// 서버 종료를 위한 함수를 얻어 저장한다.
 	stopFunc, err := RunDNS(53, func(err error) {
-		// DNS server error
-
-		// Detach closing event handler.
-		// If DNS server error has occured, doesn't ask to user before closing.
-		w.Closing().Detach(handle)
-
-		// display error message
-		walk.MsgBox(w, "SecureDNS 오류", "DNS 오류: "+err.Error(), walk.MsgBoxOK)
-
-		// and close main window.
-		w.Close()
+		WriteErrorLogMsg("DNS service error: ", err)
 	})
 
 	if err != nil {
-		walk.MsgBox(w, "SecureDNS 오류", "DNS 오류: "+err.Error(), walk.MsgBoxOK)
+		WriteErrorLogMsgF("Can't start DNS service. ", err)
 	} else {
-		w.dnsSvcStop = stopFunc
-	}
-
-	// refresh dns info
-	w.updateDNSInfo()
-}
-
-func (w *SDMainWindow) updateDNSInfo() {
-	var sb strings.Builder
-	sb.WriteString("Cloudflare DNS Over HTTPS가 작동중입니다.\r\n")
-	sb.WriteString("안전한 DNS 사용을 위하여 네트워크 설정에서\r\n")
-	sb.WriteString("시스템의 DNS 주소를 127.0.0.1로 변경하여 적용하십시오.\r\n")
-
-	w.text.SetText(sb.String())
-}
-
-func (w *SDMainWindow) toggleSecDNS() {
-
-}
-
-func (w *SDMainWindow) onMenuAbout() {
-	var sb strings.Builder
-	sb.WriteString("SecureDNS 0.1\r\n\r\n")
-	sb.WriteString("Cloudflare DNS Over HTTPS를 사용한 안전한 DNS 연결 제공\r\n")
-	sb.WriteString("https://github.com/Regentag/SecureDNS")
-
-	walk.MsgBox(w, "정보...", sb.String(), walk.MsgBoxOK)
-}
-
-func (w *SDMainWindow) onCloseWindow(canceled *bool, reason walk.CloseReason) {
-	var sb strings.Builder
-	sb.WriteString("Cloudflare DNS Over HTTPS가 작동중입니다.\r\n")
-	sb.WriteString("SecureDNS를 종료한 후 인터넷을 사용하시려면\r\n")
-	sb.WriteString("네트워크 설정에서 시스템의 DNS 주소를 본래의 주소로 되돌리십시오.\r\n")
-	sb.WriteString("\r\nSecureDNS를 종료할까요?")
-
-	yn := walk.MsgBox(w, "종료", sb.String(), walk.MsgBoxYesNo)
-	if yn != 6 { // not IDYES(6)
-		*canceled = true
-	} else {
-		if w.dnsSvcStop != nil {
-			w.dnsSvcStop()
-		}
+		srv.dnsSvcStop = stopFunc
+		log.Println("SecDNS service started.")
 	}
 }
 
-func getNetworkIfaces() []string {
-	ifaces, _ := net.Interfaces()
-	var sl []string
-
-	for _, iface := range ifaces {
-		if iface.Flags&net.FlagUp == 0 {
-			continue
-		}
-		if iface.Flags&net.FlagLoopback != 0 {
-			continue
-		}
-
-		sl = append(sl, iface.Name)
+func logPath(filename string) string {
+	ex, err := os.Executable()
+	if err != nil {
+		ex = "." // current working directory
 	}
 
-	return sl
+	exPath := filepath.Dir(ex)
+	return filepath.Join(exPath, filename)
 }
 
 func main() {
-	ifaces := getNetworkIfaces() // Network interfaces
+	log.SetOutput(&lumberjack.Logger{
+		Filename:   logPath("sec-dns.log"),
+		MaxSize:    10, // megabytes
+		MaxBackups: 1,
+		MaxAge:     28,    //days
+		Compress:   false, // disabled by default
+	})
 
-	mw := &SDMainWindow{dnsSvcStop: nil}
+	log.Println("Initializing...")
 
-	MainWindow{
-		AssignTo: &mw.MainWindow,
-		Title:    "SecureDNS 0.1",
-		Size:     Size{Width: 500, Height: 500},
-		Layout:   VBox{MarginsZero: true},
-		Font: Font{
-			Family:    "Segoe UI",
-			PointSize: 13,
-		},
-		MenuItems: []MenuItem{
-			Menu{
-				Text: "파일(&F)",
-				Items: []MenuItem{
-					Action{
-						Text:        "Exit",
-						OnTriggered: func() { mw.Close() },
-					},
-				},
-			},
-			Menu{
-				Text: "도움말(&H)",
-				Items: []MenuItem{
-					Action{
-						Text:        "SecureDNS 정보...",
-						OnTriggered: mw.onMenuAbout,
-					},
-				},
-			},
-		},
-		Children: []Widget{
-			Composite{
-				Layout: HBox{MarginsZero: false, SpacingZero: false},
-				Children: []Widget{
-					Label{Text: "네트워크 연결: "},
-					ComboBox{
-						AssignTo: &mw.ifaces,
-						Model:    ifaces,
-						OnCurrentIndexChanged: mw.updateDNSInfo,
-					},
-					HSpacer{},
-					/*
-						PushButton{
-							Text:      "DNS 보안 켜기",
-							AssignTo:  &mw.btn,
-							Enabled:   false,
-							OnClicked: mw.toggleSecDNS,
-						},
-					*/
-				},
-			},
-
-			TextEdit{
-				AssignTo:   &mw.text,
-				HScroll:    true,
-				VScroll:    true,
-				ReadOnly:   true,
-				Text:       "Ready.",
-				Background: SolidColorBrush{Color: walk.RGB(255, 255, 240)},
-			},
-		},
-	}.Create()
-	mw.Starting().Attach(mw.onWindowLoad)
-	mw.ifaces.SetCurrentIndex(0)
-	mw.Run()
+	err := svc.Run("SecDNS", &ServContext{})
+	//err = debug.Run("DummyService", &dummyService{}) //콘솔출력 디버깅시
+	if err != nil {
+		WriteErrorLogMsgF("Fatal service error: ", err)
+		panic(err)
+	}
 }
