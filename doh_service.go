@@ -6,8 +6,10 @@ import (
 	"bytes"
 	"crypto/tls"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/miekg/dns"
 )
@@ -121,8 +123,29 @@ func RunDNS(port int, errHandler SvrErrorHandlerFunc) (SvrStopFunc, error) {
 	// get DOH host address
 	h, e := getDohHostAddr()
 	if e != nil {
-		return nil, newErr("Failed to lookup Cloudflare DOH server address. " +
-			e.Error())
+		WriteErrorLogMsg("Failed to obtain Cloudflare's DOH server address.", e)
+
+		// 2019.3.5. DOH 서버 주소를 가져오는데 실패하였을 경우 잠시 기다린 후
+		// 다시 시도한다. (5회까지)
+		// 부팅 후 서비스가 처음 시작될 때 "A socket operation was attempted to
+		// an unreachable host." 오류가 발생할 경우 서비스가 중단되는것을 방지.
+		for i := 1; i < 6; i++ {
+			// wait some seconds
+			time.Sleep(time.Second * 1)
+
+			log.Printf("retry %d...", i)
+			h, e = getDohHostAddr()
+
+			if e != nil {
+				WriteErrorLogMsg("Failed to obtain Cloudflare's DOH server address.", e)
+			} else {
+				break
+			}
+		}
+
+		if e != nil {
+			return nil, newErr("Failed to obtain Cloudflare's DOH server address. The DNS service could not be started.")
+		}
 	}
 
 	handler := SecHandler{"UDP", h}
