@@ -5,3 +5,5 @@ a.out
 *.syso
 *.exe
 *.log
+setup/Output
+setup/*.exe
