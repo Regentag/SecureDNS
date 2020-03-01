@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"github.com/miekg/dns"
+	"github.com/patrickmn/go-cache"
 )
 
-/// Declare error clase
 type DohError struct {
 	msg string
 }
@@ -27,7 +27,6 @@ func newErr(msg string) error {
 	return &DohError{msg}
 }
 
-///
 const CLOUDFLARE_DNS = "1.1.1.1:53"
 const CLOUDFLARE_DOH_HOST = "cloudflare-dns.com."
 const CLOUDFLARE_DOH_URL = "https://cloudflare-dns.com/dns-query"
@@ -67,21 +66,55 @@ func makeHttpsRequest(wire []byte) (respWire []byte, err error) {
 type SecHandler struct {
 	ServiceType string
 	Host        *dns.Msg
+	NameCache   *cache.Cache
 }
 
 func (s SecHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
-	// Check for "cloudflare-dns.com" host.
-	if len(r.Question) > 0 {
-		if r.Question[0].Name == CLOUDFLARE_DOH_HOST &&
-			r.Question[0].Qtype == dns.TypeA {
+	if len(r.Question) > 0 && r.Question[0].Qtype == dns.TypeA {
+		// TypeA request
+
+		if r.Question[0].Name == CLOUDFLARE_DOH_HOST {
+			// Cloudflare DNS over HTTPS server name
 			s.Host.SetReply(r)
 			w.WriteMsg(s.Host)
+		} else {
+			// Other TypeA request
+			requestedName := r.Question[0].Name
 
-			// End func.
-			return
+			if x, found := s.NameCache.Get(requestedName); found {
+				// Cache hit:
+				cachedMsg := x.(*dns.Msg)
+				cachedMsg.SetReply(r)
+				w.WriteMsg(cachedMsg)
+			} else {
+				// Cache miss:
+				respMsg, err := s.QueryOverHTTPS(r)
+
+				if err == nil {
+					s.NameCache.SetDefault(requestedName, respMsg)
+					respMsg.SetReply(r)
+					w.WriteMsg(respMsg)
+				} else {
+					log.Printf("requested name = %s", requestedName)
+					WriteErrorLog(err)
+					dns.HandleFailed(w, r)
+				}
+			}
+		}
+	} else {
+		// all other request: just relay
+		respMsg, err := s.QueryOverHTTPS(r)
+
+		if err == nil {
+			respMsg.SetReply(r)
+			w.WriteMsg(respMsg)
+		} else {
+			dns.HandleFailed(w, r)
 		}
 	}
+}
 
+func (s SecHandler) QueryOverHTTPS(r *dns.Msg) (*dns.Msg, error) {
 	wire, err := r.Pack()
 
 	if err == nil {
@@ -91,20 +124,13 @@ func (s SecHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 			m := new(dns.Msg)
 			err := m.Unpack(resp)
 			if err == nil {
-				m.SetReply(r)
-				w.WriteMsg(m)
-			} else {
-				// Can't unpack message from wireformat.
-				dns.HandleFailed(w, r)
+				return m, nil
 			}
-		} else {
-			// HTTPS Request failed.
-			dns.HandleFailed(w, r)
+			return nil, newErr("Can't unpack message from wireformat.")
 		}
-	} else {
-		// Can't pack message to wire format
-		dns.HandleFailed(w, r)
+		return nil, newErr("HTTPS Request failed.")
 	}
+	return nil, newErr("Can't pack message from wireformat.")
 }
 
 func getDohHostAddr() (*dns.Msg, error) {
@@ -148,7 +174,11 @@ func RunDNS(port int, errHandler SvrErrorHandlerFunc) (SvrStopFunc, error) {
 		}
 	}
 
-	handler := SecHandler{"UDP", h}
+	handler := SecHandler{
+		"UDP",
+		h,
+		cache.New(1*time.Hour, 10*time.Minute),
+	}
 	srv := new(dns.Server)
 	srv.Addr = ":" + strconv.Itoa(port)
 	srv.Net = "udp"
@@ -163,8 +193,7 @@ func RunDNS(port int, errHandler SvrErrorHandlerFunc) (SvrStopFunc, error) {
 	return func() error {
 		if srv != nil {
 			return srv.Shutdown()
-		} else {
-			return newErr("No DNS server instance.")
 		}
+		return newErr("No DNS server instance.")
 	}, nil
 }

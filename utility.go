@@ -1,7 +1,10 @@
 package main
 
-import "log"
-import "github.com/jimlawless/whereami"
+import (
+	"log"
+
+	"github.com/jimlawless/whereami"
+)
 
 func WriteErrorLog(err error) {
 	if err != nil {
@@ -14,7 +17,6 @@ func WriteErrorLogMsg(msg string, err error) {
 		log.Printf("[ERROR] %s", msg)
 		log.Printf("[ERROR] %s, %v", whereami.WhereAmI(2), err)
 	}
-	return
 }
 
 func WriteErrorLogF(err error) {
@@ -28,5 +30,4 @@ func WriteErrorLogMsgF(msg string, err error) {
 		log.Printf("[ERROR] %s", msg)
 		log.Fatalf("[ERROR] %s, %v", whereami.WhereAmI(2), err)
 	}
-	return
 }
