@@ -1,12 +1,12 @@
 [Setup]
 AppId={{B83116D9-F507-46E8-B59A-AF714A182295}
 AppName=SecureDNS
-AppVersion=1.1
+AppVersion=1.2
 AppPublisher=REGENTAG
 AppPublisherURL=https://github.com/Regentag/SecureDNS
 AppSupportURL=https://github.com/Regentag/SecureDNS
 AppUpdatesURL=https://github.com/Regentag/SecureDNS/releases
-DefaultDirName={pf}\SecureDNS
+DefaultDirName={code:GetProgramFiles}\SecureDNS
 DefaultGroupName=SecureDNS
 DisableProgramGroupPage=yes
 InfoBeforeFile=setup_readme.ko_kr.rtf
@@ -36,3 +36,10 @@ Filename: "{app}\service_install.cmd"; WorkingDir: "{app}"; Description: "Instal
 
 [UninstallRun]
 Filename: "{app}\service_remove.cmd"; WorkingDir: "{app}"
+
+[Code]
+function GetProgramFiles(Param: string): string;
+begin
+  if IsWin64 then Result := ExpandConstant('{pf64}')
+    else Result := ExpandConstant('{pf32}')
+end;
