@@ -1,7 +1,7 @@
 [Setup]
 AppId={{B83116D9-F507-46E8-B59A-AF714A182295}
 AppName=SecureDNS
-AppVersion=1.2
+AppVersion=1.2a
 AppPublisher=REGENTAG
 AppPublisherURL=https://github.com/Regentag/SecureDNS
 AppSupportURL=https://github.com/Regentag/SecureDNS
@@ -20,13 +20,14 @@ AppContact=https://github.com/Regentag/SecureDNS/issues
 UninstallDisplaySize=42
 UninstallDisplayIcon={uninstallexe}
 InfoAfterFile=setup_after.ko_kr.rtf
+ArchitecturesInstallIn64BitMode=x64
+ArchitecturesAllowed=x64
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
-Source: "SecureDNS32.exe"; DestDir: "{app}"; DestName: "SecureDNS.exe"; Flags: ignoreversion 32bit
-Source: "SecureDNS64.exe"; DestDir: "{app}"; DestName: "SecureDNS.exe"; Flags: ignoreversion 64bit
+Source: "SecureDNS.exe"; DestDir: "{app}"; DestName: "SecureDNS.exe"; Flags: ignoreversion
 Source: "sec-dns.log"; DestDir: "{app}"; Flags: ignoreversion
 Source: "service_install.cmd"; DestDir: "{app}"; Flags: ignoreversion
 Source: "service_remove.cmd"; DestDir: "{app}"; Flags: ignoreversion
