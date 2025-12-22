@@ -1,12 +1,12 @@
 [Setup]
 AppId={{B83116D9-F507-46E8-B59A-AF714A182295}
 AppName=SecureDNS
-AppVersion=1.2a
+AppVersion=1.3
 AppPublisher=REGENTAG
 AppPublisherURL=https://github.com/Regentag/SecureDNS
 AppSupportURL=https://github.com/Regentag/SecureDNS
 AppUpdatesURL=https://github.com/Regentag/SecureDNS/releases
-DefaultDirName={code:GetProgramFiles}\SecureDNS
+DefaultDirName={pf64}\SecureDNS
 DefaultGroupName=SecureDNS
 DisableProgramGroupPage=yes
 InfoBeforeFile=setup_readme.ko_kr.rtf
@@ -29,6 +29,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Files]
 Source: "SecureDNS.exe"; DestDir: "{app}"; DestName: "SecureDNS.exe"; Flags: ignoreversion
 Source: "sec-dns.log"; DestDir: "{app}"; Flags: ignoreversion
+Source: "cf-host.bin"; DestDir: "{app}"; Flags: ignoreversion
 Source: "service_install.cmd"; DestDir: "{app}"; Flags: ignoreversion
 Source: "service_remove.cmd"; DestDir: "{app}"; Flags: ignoreversion
 

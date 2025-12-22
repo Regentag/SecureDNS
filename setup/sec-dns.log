@@ -1,1 +1,4 @@
-SecureDNS 1.2a installed.
+SecureDNS 1.3 installed.
+2025/12/23 00:50:06 Initializing...
+2025/12/23 00:50:06 [ERROR] Fatal service error: 
+2025/12/23 00:50:06 [ERROR] File: main.go  Function: main.main Line: 89, The service process could not connect to the service controller.

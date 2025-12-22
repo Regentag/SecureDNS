@@ -5,7 +5,8 @@ package main
 import (
 	"bytes"
 	"crypto/tls"
-	"io/ioutil"
+	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"strconv"
@@ -23,45 +24,15 @@ func (e *DohError) Error() string {
 	return e.msg
 }
 
-func newErr(msg string) error {
-	return &DohError{msg}
-}
-
-const CLOUDFLARE_DNS = "1.1.1.1:53"
-const CLOUDFLARE_DOH_HOST = "cloudflare-dns.com."
-const CLOUDFLARE_DOH_URL = "https://cloudflare-dns.com/dns-query"
-
-// Create HTTPS request and POST.
-func makeHttpsRequest(wire []byte) (respWire []byte, err error) {
-	// disable security check for client
-	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-	}
-	client := &http.Client{Transport: tr}
-	buff := bytes.NewBuffer(wire)
-
-	resp, err := client.Post(CLOUDFLARE_DOH_URL,
-		"application/dns-udpwireformat", buff)
-
-	if err == nil {
-		defer resp.Body.Close()
-
-		if resp.StatusCode != 200 {
-			return nil, newErr("HTTP error code " + resp.Status)
-		}
-
-		respBody, err := ioutil.ReadAll(resp.Body)
-		if err == nil {
-			return respBody, nil
-		} else {
-			// io: read error
-			return nil, err
-		}
+func newErr(msg string, e error) error {
+	if e == nil {
+		return &DohError{msg}
 	} else {
-		// http error
-		return nil, err
+		return &DohError{msg + "\r\n  Cause: " + e.Error()}
 	}
 }
+
+const CLOUDFLARE_DOH_URL = "https://cloudflare-dns.com/dns-query"
 
 type SecHandler struct {
 	ServiceType string
@@ -88,22 +59,25 @@ func (s SecHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 				w.WriteMsg(cachedMsg)
 			} else {
 				// Cache miss:
-				respMsg, err := s.QueryOverHTTPS(r)
+				respMsg, err := s.queryOverHTTPS(r)
 
 				if err == nil {
 					s.NameCache.SetDefault(requestedName, respMsg)
 					respMsg.SetReply(r)
 					w.WriteMsg(respMsg)
 				} else {
-					log.Printf("requested name = %s", requestedName)
-					WriteErrorLog(err)
+					errMsg := fmt.Sprintf(
+						"DNS query failed. Requested name: %s",
+						requestedName)
+
+					WriteErrorLogMsg(errMsg, err)
 					dns.HandleFailed(w, r)
 				}
 			}
 		}
 	} else {
 		// all other request: just relay
-		respMsg, err := s.QueryOverHTTPS(r)
+		respMsg, err := s.queryOverHTTPS(r)
 
 		if err == nil {
 			respMsg.SetReply(r)
@@ -114,7 +88,7 @@ func (s SecHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	}
 }
 
-func (s SecHandler) QueryOverHTTPS(r *dns.Msg) (*dns.Msg, error) {
+func (s SecHandler) queryOverHTTPS(r *dns.Msg) (*dns.Msg, error) {
 	wire, err := r.Pack()
 
 	if err == nil {
@@ -126,20 +100,43 @@ func (s SecHandler) QueryOverHTTPS(r *dns.Msg) (*dns.Msg, error) {
 			if err == nil {
 				return m, nil
 			}
-			return nil, newErr("Can't unpack message from wireformat.")
+			return nil, newErr("Failed to unpack the response message.", err)
 		}
-		return nil, newErr("HTTPS Request failed.")
+		return nil, newErr("The HTTPS request failed.", err)
 	}
-	return nil, newErr("Can't pack message from wireformat.")
+	return nil, newErr("Failed to pack the request message.", err)
 }
 
-func getDohHostAddr() (*dns.Msg, error) {
-	m := new(dns.Msg)
-	m.SetQuestion(CLOUDFLARE_DOH_HOST, dns.TypeA)
+// Create HTTPS request and POST.
+func makeHttpsRequest(wire []byte) (respWire []byte, err error) {
+	// disable security check for client
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := &http.Client{Transport: tr}
+	buff := bytes.NewBuffer(wire)
 
-	client := new(dns.Client)
-	r, _, err := client.Exchange(m, CLOUDFLARE_DNS)
-	return r, err
+	resp, err := client.Post(CLOUDFLARE_DOH_URL,
+		"application/dns-udpwireformat", buff)
+
+	if err == nil {
+		defer resp.Body.Close()
+
+		if resp.StatusCode != 200 {
+			return nil, newErr("HTTP error code "+resp.Status, nil)
+		}
+
+		respBody, err := io.ReadAll(resp.Body)
+		if err == nil {
+			return respBody, nil
+		} else {
+			// io: read error
+			return nil, err
+		}
+	} else {
+		// http error
+		return nil, err
+	}
 }
 
 type SvrStopFunc func() error
@@ -147,7 +144,7 @@ type SvrErrorHandlerFunc func(err error)
 
 func RunDNS(port int, errHandler SvrErrorHandlerFunc) (SvrStopFunc, error) {
 	// get DOH host address
-	h, e := getDohHostAddr()
+	h, e := GetCloudflareAddress(false)
 	if e != nil {
 		WriteErrorLogMsg("Failed to obtain Cloudflare's DOH server address.", e)
 
@@ -160,7 +157,8 @@ func RunDNS(port int, errHandler SvrErrorHandlerFunc) (SvrStopFunc, error) {
 			time.Sleep(time.Second * 1)
 
 			log.Printf("retry %d...", i)
-			h, e = getDohHostAddr()
+			// 재시도의 경우에는 forceQuery = true 설정한다.
+			h, e = GetCloudflareAddress(true)
 
 			if e != nil {
 				WriteErrorLogMsg("Failed to obtain Cloudflare's DOH server address.", e)
@@ -170,7 +168,7 @@ func RunDNS(port int, errHandler SvrErrorHandlerFunc) (SvrStopFunc, error) {
 		}
 
 		if e != nil {
-			return nil, newErr("Failed to obtain Cloudflare's DOH server address. The DNS service could not be started.")
+			return nil, newErr("Failed to obtain Cloudflare's DOH server address. The SecDNS service could not be started.", e)
 		}
 	}
 
@@ -194,6 +192,6 @@ func RunDNS(port int, errHandler SvrErrorHandlerFunc) (SvrStopFunc, error) {
 		if srv != nil {
 			return srv.Shutdown()
 		}
-		return newErr("No DNS server instance.")
+		return newErr("No SecDNS server instance.", nil)
 	}, nil
 }

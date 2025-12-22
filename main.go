@@ -3,19 +3,18 @@ package main
 import (
 	"golang.org/x/sys/windows/svc"
 	//"golang.org/x/sys/windows/svc/debug"
-	"gopkg.in/natefinch/lumberjack.v2"
 	"log"
-	"os"
-	"path/filepath"
 	"time"
+
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
-type ServContext struct {
+type WinServiceHandler struct {
 	dnsSvcStop SvrStopFunc
 }
 
 // svc.Handler 인터페이스 구현
-func (srv *ServContext) Execute(args []string, req <-chan svc.ChangeRequest, stat chan<- svc.Status) (svcSpecificEC bool, exitCode uint32) {
+func (srv *WinServiceHandler) Execute(args []string, req <-chan svc.ChangeRequest, stat chan<- svc.Status) (svcSpecificEC bool, exitCode uint32) {
 	stat <- svc.Status{State: svc.StartPending}
 
 	// 실제 서비스 내용
@@ -49,43 +48,33 @@ LOOP:
 
 	de := srv.dnsSvcStop()
 	if de != nil {
-		WriteErrorLogMsg("DNS service shutdown error: ", de)
+		WriteErrorLogMsg("SecDNS service shutdown error: ", de)
 	} else {
-		log.Println("DNS service stopped.")
+		log.Println("SecDNS service stopped.")
 	}
 
 	log.Println("SecDNS was stopped.")
 	return
 }
 
-func (srv *ServContext) runBody() {
+func (srv *WinServiceHandler) runBody() {
 	// DNS 서버를 go routine으로 시작하고
 	// 서버 종료를 위한 함수를 얻어 저장한다.
 	stopFunc, err := RunDNS(53, func(err error) {
-		WriteErrorLogMsg("DNS service error: ", err)
+		WriteErrorLogMsg("SecDNS service error: ", err)
 	})
 
 	if err != nil {
-		WriteErrorLogMsgF("Can't start DNS service. ", err)
+		WriteErrorLogMsgF("Can't start SecDNS service. ", err)
 	} else {
 		srv.dnsSvcStop = stopFunc
 		log.Println("SecDNS service started.")
 	}
 }
 
-func logPath(filename string) string {
-	ex, err := os.Executable()
-	if err != nil {
-		ex = "." // current working directory
-	}
-
-	exPath := filepath.Dir(ex)
-	return filepath.Join(exPath, filename)
-}
-
 func main() {
 	log.SetOutput(&lumberjack.Logger{
-		Filename:   logPath("sec-dns.log"),
+		Filename:   GetMyDataPath("sec-dns.log"),
 		MaxSize:    10, // megabytes
 		MaxBackups: 1,
 		MaxAge:     28,    //days
@@ -94,7 +83,7 @@ func main() {
 
 	log.Println("Initializing...")
 
-	err := svc.Run("SecDNS", &ServContext{})
+	err := svc.Run("SecDNS", &WinServiceHandler{})
 	//err = debug.Run("DummyService", &dummyService{}) //콘솔출력 디버깅시
 	if err != nil {
 		WriteErrorLogMsgF("Fatal service error: ", err)
